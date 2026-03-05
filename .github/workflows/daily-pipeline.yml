@@ -1,0 +1,53 @@
+name: VA IRRRL Daily Rate Pipeline
+
+on:
+  schedule:
+    # 4pm EDT (UTC-4, Mar–Nov) = 20:00 UTC
+    - cron: '0 20 * * 1-5'
+    # 4pm EST (UTC-5, Nov–Mar) = 21:00 UTC
+    - cron: '0 21 * * 1-5'
+  # Allow manual trigger from GitHub Actions tab (great for testing)
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    # Required to commit history.json back to the repo
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run rate pipeline
+        run: node src/index.js
+        env:
+          FRED_API_KEY:          ${{ secrets.FRED_API_KEY }}
+          MAILGUN_API_KEY:       ${{ secrets.MAILGUN_API_KEY }}
+          MAILGUN_DOMAIN:        ${{ secrets.MAILGUN_DOMAIN }}
+          NEWS_API_KEY:          ${{ secrets.NEWS_API_KEY }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          RECIPIENT_EMAILS:      ${{ secrets.RECIPIENT_EMAILS }}
+
+      - name: Commit updated rate history
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet data/history.json; then
+            echo "No history changes to commit."
+          else
+            git add data/history.json
+            git commit -m "chore: rate history $(date -u +%Y-%m-%d)"
+            git push
+          fi
