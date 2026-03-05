@@ -1,4 +1,12 @@
 {
-  "entries": [],
-  "lastRunDate": null
+  "entries": [
+    {
+      "date": "2026-03-04",
+      "dgs30": 4.72,
+      "dgs10": 4.09,
+      "dgs2": 3.54,
+      "mortgage30": 6
+    }
+  ],
+  "lastRunDate": "2026-03-05"
 }
