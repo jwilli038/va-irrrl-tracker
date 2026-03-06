@@ -114,14 +114,16 @@ async function fetchRates() {
     dgs10: {
       value: dgs10Now?.value ?? null,
       bpChange: bpChange(dgs10Now, prev(dgs10History)),
+      history: dgs10History,
     },
     dgs2: {
       value: dgs2Now?.value ?? null,
       bpChange: bpChange(dgs2Now, prev(dgs2History)),
+      history: dgs2History,
     },
     mortgage30: {
       value: mortgage30Now?.value ?? null,
-      history: mortgageHistory.slice(0, 10), // last 10 weeks
+      history: mortgageHistory,
     },
     // VA IRRRL estimate: conventional 30yr mortgage minus ~0.25%
     vaIrrrEstimate: mortgage30Now

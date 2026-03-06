@@ -10,6 +10,7 @@ const { getFomcRisk } = require('./fomc');
 const { fetchSentiment } = require('./sentiment');
 const { updateHistory, recommend } = require('./analysis');
 const { sendEmail }     = require('./email');
+const { getEconomistCommentary } = require('./economist');
 const { format }        = require('date-fns');
 const fs = require('fs');
 const path = require('path');
@@ -64,26 +65,29 @@ async function run() {
     const sentiment = await fetchSentiment();
     console.log(`  Sentiment: ${sentiment.summary.label}`);
 
-    console.log('\n[4/4] Running analysis...');
+    console.log('\n[4/5] Running analysis...');
     const history = updateHistory(rates);
     const recommendation = recommend({ rates, fomcRisk, sentiment, history });
     console.log(`  Verdict: ${recommendation.verdict} (score: ${recommendation.score})`);
     console.log(`  Reasons:`);
     recommendation.reasons.forEach(r => console.log(`    - ${r}`));
 
+    console.log('\n[5/5] Getting AI economist commentary...');
+    const economistComment = await getEconomistCommentary({ rates, fomcRisk, sentiment, recommendation });
+
     if (DRY_RUN) {
       console.log('\n--- DRY RUN: saving HTML preview to /tmp/preview.html ---');
       const { buildHtml } = require('./email');
       const { format: fmt } = require('date-fns');
       const html = buildHtml({
-        rates, fomcRisk, sentiment, recommendation,
+        rates, fomcRisk, sentiment, recommendation, economistComment,
         dateStr: fmt(new Date(), 'EEEE, MMMM d, yyyy'),
       });
       fs.writeFileSync('/tmp/preview.html', html);
       console.log('Preview saved. Open in browser to review.');
     } else {
       console.log('\nSending email...');
-      await sendEmail({ rates, fomcRisk, sentiment, recommendation });
+      await sendEmail({ rates, fomcRisk, sentiment, recommendation, economistComment });
       stampRunDate(history);
     }
 

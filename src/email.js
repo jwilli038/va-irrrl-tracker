@@ -65,7 +65,7 @@ function weeklyTable(snapshots) {
     </table>`;
 }
 
-function buildHtml({ rates, fomcRisk, sentiment, recommendation, dateStr }) {
+function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistComment, dateStr }) {
   const { curveShape } = require('./fomc');
   const curve = curveShape(rates.spreads.twoThirty);
 
@@ -196,6 +196,14 @@ function buildHtml({ rates, fomcRisk, sentiment, recommendation, dateStr }) {
       <ul style="margin:0;padding-left:18px;font-size:13px;color:#374151;line-height:1.7">${reasonsList}</ul>
     </div>
 
+    <!-- AI Economist Commentary -->
+    ${economistComment ? `
+    <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">AI Economic Analysis</h3>
+    <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:16px 18px;margin-bottom:24px">
+      <div style="font-size:11px;color:#7c3aed;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">🤖 Claude AI · Senior Fixed-Income Economist</div>
+      <div style="font-size:13px;color:#374151;line-height:1.8">${economistComment}</div>
+    </div>` : ''}
+
   </div>
 
   <!-- Footer -->
@@ -208,11 +216,11 @@ function buildHtml({ rates, fomcRisk, sentiment, recommendation, dateStr }) {
 </html>`;
 }
 
-async function sendEmail({ rates, fomcRisk, sentiment, recommendation }) {
+async function sendEmail({ rates, fomcRisk, sentiment, recommendation, economistComment }) {
   const dateStr = format(new Date(), 'EEEE, MMMM d, yyyy');
   const subject = `VA IRRRL Watch ${format(new Date(), 'M/d')} | 30yr: ${rates.dgs30.value?.toFixed(3) ?? '?'}% | ${recommendation.verdict}`;
 
-  const html = buildHtml({ rates, fomcRisk, sentiment, recommendation, dateStr });
+  const html = buildHtml({ rates, fomcRisk, sentiment, recommendation, economistComment, dateStr });
 
   const recipients = (process.env.RECIPIENT_EMAILS || '')
     .split(',')
