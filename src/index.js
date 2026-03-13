@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DRY_RUN = process.argv.includes('--dry-run');
+const FORCE   = process.argv.includes('--force');
 const HISTORY_FILE = path.join(__dirname, '..', 'data', 'history.json');
 
 /**
@@ -43,7 +44,7 @@ async function run() {
   console.log(`Run time: ${new Date().toISOString()}`);
   if (DRY_RUN) console.log('DRY RUN MODE — email will not be sent');
 
-  if (!DRY_RUN && alreadyRanToday()) {
+  if (!DRY_RUN && !FORCE && alreadyRanToday()) {
     console.log('Pipeline already ran today. Skipping duplicate run (DST cron guard).');
     process.exit(0);
   }
