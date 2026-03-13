@@ -67,53 +67,76 @@ function weeklyTable(snapshots) {
 
 function roiSection(rates) {
   if (!rates.vaIrrrEstimate) return '';
-  const newRate = rates.vaIrrrEstimate.low;
-  const roi = calcROI(newRate);
   const fmt = (n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const savingsColor = roi.monthlySavings > 0 ? '#16a34a' : '#dc2626';
-  const savingsSign  = roi.monthlySavings > 0 ? '−' : '+';
-  const absSavings   = Math.abs(roi.monthlySavings);
+  // With credits: lower upfront cost ($1,600) but higher rate (lender credits offset closing costs)
+  const withCredits    = calcROI(rates.vaIrrrEstimate.high, 1600);
+  // Without credits: full closing costs ($4,337) but lowest available rate
+  const withoutCredits = calcROI(rates.vaIrrrEstimate.low,  4337);
 
-  const breakEvenHtml = roi.breakEvenMonths
-    ? `<span style="font-weight:700;color:#1e40af">${roi.breakEvenMonths} months (${roi.breakEvenYears} yrs)</span>`
-    : `<span style="color:#dc2626">N/A — new rate is higher</span>`;
+  function scenarioCol(roi, label, accentColor) {
+    const savingsColor = roi.monthlySavings > 0 ? '#16a34a' : '#dc2626';
+    const savingsSign  = roi.monthlySavings > 0 ? '−' : '+';
+    const absSavings   = Math.abs(roi.monthlySavings);
+    const breakEven    = roi.breakEvenMonths
+      ? `<strong style="color:#1e40af">${roi.breakEvenMonths} mo (${roi.breakEvenYears} yrs)</strong>`
+      : `<span style="color:#dc2626">N/A</span>`;
+
+    return `
+      <td style="padding:0;vertical-align:top;width:50%">
+        <div style="border:2px solid ${accentColor};border-radius:8px;padding:14px;margin:0 4px">
+          <div style="font-size:12px;font-weight:700;color:${accentColor};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;text-align:center">${label}</div>
+          <table style="width:100%;font-size:13px;border-collapse:collapse">
+            <tr>
+              <td style="padding:4px 0;color:#6b7280">Closing Costs</td>
+              <td style="padding:4px 0;font-weight:700;text-align:right">$${fmt(roi.closingCosts)}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0;color:#6b7280">New Rate</td>
+              <td style="padding:4px 0;font-weight:700;text-align:right;color:${accentColor}">${roi.newRate.toFixed(3)}%</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0;color:#6b7280">New P&amp;I</td>
+              <td style="padding:4px 0;font-weight:700;text-align:right">$${fmt(roi.newPI)}/mo</td>
+            </tr>
+            <tr style="border-top:1px solid #e5e7eb">
+              <td style="padding:6px 0;color:#6b7280;font-weight:600">Monthly Savings</td>
+              <td style="padding:6px 0;font-weight:700;text-align:right;font-size:15px;color:${savingsColor}">${savingsSign}$${fmt(absSavings)}/mo</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0;color:#6b7280;font-weight:600">Break-Even</td>
+              <td style="padding:4px 0;text-align:right">${breakEven}</td>
+            </tr>
+          </table>
+        </div>
+      </td>`;
+  }
 
   return `
     <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Refinance ROI — Break-Even Analysis</h3>
-    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:16px 18px;margin-bottom:24px">
-      <table style="width:100%;font-size:13px;border-collapse:collapse">
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:24px">
+      <table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:12px">
         <tr>
-          <td style="padding:5px 8px;color:#6b7280;width:42%">Outstanding Balance</td>
-          <td style="padding:5px 8px;font-weight:600">$${fmt(roi.loanBalance)}</td>
-          <td style="padding:5px 8px;color:#6b7280;width:22%">Remaining Term</td>
-          <td style="padding:5px 8px;font-weight:600">${Math.floor(roi.remainingMonths / 12)} yrs ${roi.remainingMonths % 12} mo</td>
+          <td style="padding:3px 8px;color:#6b7280">Current Loan Balance</td>
+          <td style="padding:3px 8px;font-weight:600">$${fmt(withCredits.loanBalance)}</td>
+          <td style="padding:3px 8px;color:#6b7280">Remaining Term</td>
+          <td style="padding:3px 8px;font-weight:600">${Math.floor(withCredits.remainingMonths / 12)} yrs ${withCredits.remainingMonths % 12} mo</td>
         </tr>
         <tr>
-          <td style="padding:5px 8px;color:#6b7280">Current Rate</td>
-          <td style="padding:5px 8px;font-weight:600">${roi.currentRate.toFixed(3)}%</td>
-          <td style="padding:5px 8px;color:#6b7280">Current P&amp;I</td>
-          <td style="padding:5px 8px;font-weight:600">$${fmt(roi.currentPI)}/mo</td>
-        </tr>
-        <tr>
-          <td style="padding:5px 8px;color:#6b7280">Est. New VA Rate (best)</td>
-          <td style="padding:5px 8px;font-weight:600;color:#16a34a">${roi.newRate.toFixed(3)}%</td>
-          <td style="padding:5px 8px;color:#6b7280">New P&amp;I</td>
-          <td style="padding:5px 8px;font-weight:600;color:#16a34a">$${fmt(roi.newPI)}/mo</td>
-        </tr>
-        <tr style="border-top:2px solid #86efac">
-          <td style="padding:8px 8px;color:#6b7280;font-weight:600">Monthly P&amp;I Savings</td>
-          <td style="padding:8px 8px;font-size:16px;font-weight:700;color:${savingsColor}">${savingsSign}$${fmt(absSavings)}/mo</td>
-          <td style="padding:8px 8px;color:#6b7280;font-weight:600">VA Funding Fee</td>
-          <td style="padding:8px 8px;font-weight:600">$${fmt(roi.vaFundingFee)}</td>
-        </tr>
-        <tr>
-          <td style="padding:5px 8px;color:#6b7280;font-weight:600">Break-Even</td>
-          <td style="padding:5px 8px" colspan="3">${breakEvenHtml}</td>
+          <td style="padding:3px 8px;color:#6b7280">Current Rate</td>
+          <td style="padding:3px 8px;font-weight:600">${withCredits.currentRate.toFixed(3)}%</td>
+          <td style="padding:3px 8px;color:#6b7280">Current P&amp;I</td>
+          <td style="padding:3px 8px;font-weight:600">$${fmt(withCredits.currentPI)}/mo</td>
         </tr>
       </table>
-      <div style="font-size:11px;color:#6b7280;margin-top:10px">
-        New rate uses best-case VA IRRRL estimate (perfect credit, lowest lender spread). Actual rates vary. P&amp;I only — escrow unchanged.
+      <table style="width:100%;border-collapse:collapse">
+        <tr>
+          ${scenarioCol(withCredits,    '✦ With Lender Credits',    '#7c3aed')}
+          ${scenarioCol(withoutCredits, '✦ Without Lender Credits', '#0369a1')}
+        </tr>
+      </table>
+      <div style="font-size:11px;color:#9ca3af;margin-top:10px;text-align:center">
+        With credits = higher rate, lower upfront cost · Without credits = lowest rate, full closing costs · P&amp;I only, escrow unchanged
       </div>
     </div>`;
 }
