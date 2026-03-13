@@ -152,10 +152,14 @@ function recommend({ rates, fomcRisk, sentiment, history }) {
   const avg30 = avgOver(entries, 30);
   const avg60 = avgOver(entries, 60);
 
-  // 30-day low/high
-  const last30 = entries.filter(e => e.dgs30 !== null).slice(-30);
+  // 30-day and 90-day low/high
+  const validEntries = entries.filter(e => e.dgs30 !== null);
+  const last30 = validEntries.slice(-30);
+  const last90 = validEntries.slice(-90);
   const min30  = last30.length ? Math.min(...last30.map(e => e.dgs30)) : null;
   const max30  = last30.length ? Math.max(...last30.map(e => e.dgs30)) : null;
+  const min90  = last90.length ? Math.min(...last90.map(e => e.dgs30)) : null;
+  const max90  = last90.length ? Math.max(...last90.map(e => e.dgs30)) : null;
   const pctFromLow = min30 ? ((current - min30) / min30) * 100 : null;
 
   const sentimentDir = sentiment?.summary?.label ?? 'Neutral';
@@ -221,7 +225,7 @@ function recommend({ rates, fomcRisk, sentiment, history }) {
     color,
     score,
     reasons: reasons.slice(0, 3),
-    stats: { current, avg7, avg30, avg60, min30, max30, trend: trend.label, trendArrow: trend.arrow },
+    stats: { current, avg7, avg30, avg60, min30, max30, min90, max90, trend: trend.label, trendArrow: trend.arrow },
     weeklySnapshot: weeklySnapshot(entries),
   };
 }

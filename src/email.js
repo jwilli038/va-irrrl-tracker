@@ -114,9 +114,14 @@ function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistCommen
         <td style="padding:4px 8px;color:#6b7280">60-day avg</td><td style="padding:4px 8px;font-weight:600">${stats.avg60 ? stats.avg60 + '%' : '—'}</td>
       </tr>
       <tr>
-        <td style="padding:4px 8px;color:#6b7280">30-day low</td><td style="padding:4px 8px;font-weight:600">${stats.min30 ? stats.min30 + '%' : '—'}</td>
-        <td style="padding:4px 8px;color:#6b7280">30-day high</td><td style="padding:4px 8px;font-weight:600">${stats.max30 ? stats.max30 + '%' : '—'}</td>
+        <td style="padding:4px 8px;color:#6b7280">30-day low</td><td style="padding:4px 8px;font-weight:600;color:#16a34a">${stats.min30 ? stats.min30 + '%' : '—'}</td>
+        <td style="padding:4px 8px;color:#6b7280">30-day high</td><td style="padding:4px 8px;font-weight:600;color:#dc2626">${stats.max30 ? stats.max30 + '%' : '—'}</td>
         <td style="padding:4px 8px;color:#6b7280">5-day trend</td><td style="padding:4px 8px;font-weight:600">${stats.trend || '—'}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 8px;color:#6b7280">90-day low</td><td style="padding:4px 8px;font-weight:600;color:#16a34a">${stats.min90 ? stats.min90 + '%' : '—'}</td>
+        <td style="padding:4px 8px;color:#6b7280">90-day high</td><td style="padding:4px 8px;font-weight:600;color:#dc2626">${stats.max90 ? stats.max90 + '%' : '—'}</td>
+        <td style="padding:4px 8px;color:#6b7280"></td><td></td>
       </tr>
     </table>`;
 
@@ -221,10 +226,19 @@ async function sendEmail({ rates, fomcRisk, sentiment, recommendation, economist
 
   const html = buildHtml({ rates, fomcRisk, sentiment, recommendation, economistComment, dateStr });
 
-  const recipients = (process.env.RECIPIENT_EMAILS || '')
-    .split(',')
-    .map(e => e.trim())
-    .filter(Boolean);
+  // Jeff + Amy get emails every weekday
+  const dailyRecipients = (process.env.RECIPIENT_EMAILS || '')
+    .split(',').map(e => e.trim()).filter(Boolean);
+
+  // Evan + Alec get emails on Tuesdays (2) and Thursdays (4) only
+  const dayOfWeek = new Date().getDay();
+  const isTueThu = dayOfWeek === 2 || dayOfWeek === 4;
+  const ttRecipients = isTueThu
+    ? (process.env.RECIPIENT_EMAILS_TT || '').split(',').map(e => e.trim()).filter(Boolean)
+    : [];
+
+  const recipients = [...dailyRecipients, ...ttRecipients];
+  console.log(`  Recipients today (day ${dayOfWeek}): ${recipients.join(', ')}`);
 
   if (recipients.length === 0) {
     console.warn('No RECIPIENT_EMAILS configured — skipping email send.');
