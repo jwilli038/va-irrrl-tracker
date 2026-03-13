@@ -1,8 +1,7 @@
 /**
- * email.js — HTML email template and Mailgun sender
+ * email.js — HTML email template and Gmail SMTP sender
  */
-const FormData = require('form-data');
-const Mailgun  = require('mailgun.js');
+const nodemailer = require('nodemailer');
 const { format } = require('date-fns');
 
 function bpBadge(bp) {
@@ -232,23 +231,28 @@ async function sendEmail({ rates, fomcRisk, sentiment, recommendation, economist
     return;
   }
 
-  if (!process.env.MAILGUN_API_KEY || !process.env.MAILGUN_DOMAIN) {
-    console.warn('Mailgun credentials not set — skipping email send. HTML preview saved to /tmp/preview.html');
+  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+    console.warn('Gmail credentials not set — skipping email send. HTML preview saved to /tmp/preview.html');
     require('fs').writeFileSync('/tmp/preview.html', html);
     return;
   }
 
-  const mailgun = new Mailgun(FormData);
-  const mg = mailgun.client({ username: 'api', key: process.env.MAILGUN_API_KEY });
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.GMAIL_USER,
+      pass: process.env.GMAIL_APP_PASSWORD,
+    },
+  });
 
-  const result = await mg.messages.create(process.env.MAILGUN_DOMAIN, {
-    from: `VA IRRRL Watch <noreply@${process.env.MAILGUN_DOMAIN}>`,
-    to: recipients,
+  const result = await transporter.sendMail({
+    from: `VA IRRRL Watch <${process.env.GMAIL_USER}>`,
+    to: recipients.join(', '),
     subject,
     html,
   });
 
-  console.log('Email sent:', result.id, '→', recipients.join(', '));
+  console.log('Email sent:', result.messageId, '→', recipients.join(', '));
 }
 
 module.exports = { sendEmail, buildHtml };
