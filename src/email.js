@@ -3,6 +3,7 @@
  */
 const nodemailer = require('nodemailer');
 const { format } = require('date-fns');
+const { calcROI } = require('./roi');
 
 function bpBadge(bp) {
   if (bp === null || bp === undefined) return '<span style="color:#6b7280">—</span>';
@@ -62,6 +63,59 @@ function weeklyTable(snapshots) {
       </thead>
       <tbody>${rows}</tbody>
     </table>`;
+}
+
+function roiSection(rates) {
+  if (!rates.vaIrrrEstimate) return '';
+  const newRate = rates.vaIrrrEstimate.low;
+  const roi = calcROI(newRate);
+  const fmt = (n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const savingsColor = roi.monthlySavings > 0 ? '#16a34a' : '#dc2626';
+  const savingsSign  = roi.monthlySavings > 0 ? '−' : '+';
+  const absSavings   = Math.abs(roi.monthlySavings);
+
+  const breakEvenHtml = roi.breakEvenMonths
+    ? `<span style="font-weight:700;color:#1e40af">${roi.breakEvenMonths} months (${roi.breakEvenYears} yrs)</span>`
+    : `<span style="color:#dc2626">N/A — new rate is higher</span>`;
+
+  return `
+    <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Refinance ROI — Break-Even Analysis</h3>
+    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:16px 18px;margin-bottom:24px">
+      <table style="width:100%;font-size:13px;border-collapse:collapse">
+        <tr>
+          <td style="padding:5px 8px;color:#6b7280;width:42%">Outstanding Balance</td>
+          <td style="padding:5px 8px;font-weight:600">$${fmt(roi.loanBalance)}</td>
+          <td style="padding:5px 8px;color:#6b7280;width:22%">Remaining Term</td>
+          <td style="padding:5px 8px;font-weight:600">${Math.floor(roi.remainingMonths / 12)} yrs ${roi.remainingMonths % 12} mo</td>
+        </tr>
+        <tr>
+          <td style="padding:5px 8px;color:#6b7280">Current Rate</td>
+          <td style="padding:5px 8px;font-weight:600">${roi.currentRate.toFixed(3)}%</td>
+          <td style="padding:5px 8px;color:#6b7280">Current P&amp;I</td>
+          <td style="padding:5px 8px;font-weight:600">$${fmt(roi.currentPI)}/mo</td>
+        </tr>
+        <tr>
+          <td style="padding:5px 8px;color:#6b7280">Est. New VA Rate (best)</td>
+          <td style="padding:5px 8px;font-weight:600;color:#16a34a">${roi.newRate.toFixed(3)}%</td>
+          <td style="padding:5px 8px;color:#6b7280">New P&amp;I</td>
+          <td style="padding:5px 8px;font-weight:600;color:#16a34a">$${fmt(roi.newPI)}/mo</td>
+        </tr>
+        <tr style="border-top:2px solid #86efac">
+          <td style="padding:8px 8px;color:#6b7280;font-weight:600">Monthly P&amp;I Savings</td>
+          <td style="padding:8px 8px;font-size:16px;font-weight:700;color:${savingsColor}">${savingsSign}$${fmt(absSavings)}/mo</td>
+          <td style="padding:8px 8px;color:#6b7280;font-weight:600">VA Funding Fee</td>
+          <td style="padding:8px 8px;font-weight:600">$${fmt(roi.vaFundingFee)}</td>
+        </tr>
+        <tr>
+          <td style="padding:5px 8px;color:#6b7280;font-weight:600">Break-Even</td>
+          <td style="padding:5px 8px" colspan="3">${breakEvenHtml}</td>
+        </tr>
+      </table>
+      <div style="font-size:11px;color:#6b7280;margin-top:10px">
+        New rate uses best-case VA IRRRL estimate (perfect credit, lowest lender spread). Actual rates vary. P&amp;I only — escrow unchanged.
+      </div>
+    </div>`;
 }
 
 function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistComment, dateStr }) {
@@ -154,6 +208,9 @@ function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistCommen
       <div style="font-size:24px;color:#1e3a8a;margin-top:4px">${vaEst}</div>
       <div style="font-size:11px;color:#6b7280;margin-top:4px">Based on Freddie Mac 30yr conventional average (MORTGAGE30US) minus 0.125%–0.375%. Actual VA rates vary by lender.</div>
     </div>
+
+    <!-- ROI break-even -->
+    ${roiSection(rates)}
 
     <!-- 60-day rate table -->
     <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Rate History (Weekly Snapshots)</h3>
