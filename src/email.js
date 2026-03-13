@@ -71,8 +71,8 @@ function roiSection(rates) {
 
   // With credits: lower upfront cost ($1,600) but higher rate (lender credits offset closing costs)
   const withCredits    = calcROI(rates.vaIrrrEstimate.high, 1600);
-  // Without credits: full closing costs ($4,337) but lowest available rate
-  const withoutCredits = calcROI(rates.vaIrrrEstimate.low,  4337);
+  // Without credits: full closing costs ($6,000) but lowest available rate
+  const withoutCredits = calcROI(rates.vaIrrrEstimate.low,  6000);
 
   function scenarioCol(roi, label, accentColor) {
     const savingsColor = roi.monthlySavings > 0 ? '#16a34a' : '#dc2626';
