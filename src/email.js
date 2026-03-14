@@ -3,7 +3,11 @@
  */
 const nodemailer = require('nodemailer');
 const { format } = require('date-fns');
-const { calcROI } = require('./roi');
+const { calcROI, calcROIFromMortgage } = require('./roi');
+
+// ---------------------------------------------------------------------------
+// Utility badges / formatters
+// ---------------------------------------------------------------------------
 
 function bpBadge(bp) {
   if (bp === null || bp === undefined) return '<span style="color:#6b7280">—</span>';
@@ -65,21 +69,45 @@ function weeklyTable(snapshots) {
     </table>`;
 }
 
+// ---------------------------------------------------------------------------
+// Countdown section
+// ---------------------------------------------------------------------------
+
+function countdownSection() {
+  const deadline  = new Date('2026-04-30T23:59:59');
+  const now       = new Date();
+  const msLeft    = deadline - now;
+  const daysLeft  = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60 * 24)));
+  const urgency   = daysLeft <= 14 ? '#dc2626' : daysLeft <= 30 ? '#d97706' : '#1e40af';
+  const bg        = daysLeft <= 14 ? '#fee2e2' : daysLeft <= 30 ? '#fef3c7' : '#eff6ff';
+  const border    = daysLeft <= 14 ? '#fca5a5' : daysLeft <= 30 ? '#fde68a' : '#bfdbfe';
+
+  return `
+    <div style="background:${bg};border:2px solid ${border};border-radius:8px;padding:14px 18px;margin-bottom:24px;text-align:center">
+      <div style="font-size:11px;color:#6b7280;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">VA Loan Close Deadline — April 30, 2026</div>
+      <div style="font-size:42px;font-weight:900;color:${urgency};margin:4px 0;line-height:1">${daysLeft}</div>
+      <div style="font-size:14px;color:#374151;font-weight:600">days remaining to lock</div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// ROI break-even section (two columns)
+// ---------------------------------------------------------------------------
+
 function roiSection(rates) {
   if (!rates.vaIrrrEstimate) return '';
   const fmt = (n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  // With credits: lower upfront cost ($1,600) but higher rate (lender credits offset closing costs)
   const withCredits    = calcROI(rates.vaIrrrEstimate.high, 1600);
-  // Without credits: full closing costs ($6,000) but lowest available rate
   const withoutCredits = calcROI(rates.vaIrrrEstimate.low,  6000);
 
   function scenarioCol(roi, label, accentColor) {
     const savingsColor = roi.monthlySavings > 0 ? '#16a34a' : '#dc2626';
     const savingsSign  = roi.monthlySavings > 0 ? '−' : '+';
     const absSavings   = Math.abs(roi.monthlySavings);
+    const beColor      = roi.breakEvenMonths && roi.breakEvenMonths <= 20 ? '#16a34a' : '#1e40af';
     const breakEven    = roi.breakEvenMonths
-      ? `<strong style="color:#1e40af">${roi.breakEvenMonths} mo (${roi.breakEvenYears} yrs)</strong>`
+      ? `<strong style="color:${beColor};font-size:18px">${roi.breakEvenMonths} mo</strong>`
       : `<span style="color:#dc2626">N/A</span>`;
 
     return `
@@ -104,7 +132,7 @@ function roiSection(rates) {
               <td style="padding:6px 0;font-weight:700;text-align:right;font-size:15px;color:${savingsColor}">${savingsSign}$${fmt(absSavings)}/mo</td>
             </tr>
             <tr>
-              <td style="padding:4px 0;color:#6b7280;font-weight:600">Break-Even</td>
+              <td style="padding:4px 0;color:#6b7280;font-weight:700">Break-Even</td>
               <td style="padding:4px 0;text-align:right">${breakEven}</td>
             </tr>
           </table>
@@ -141,15 +169,120 @@ function roiSection(rates) {
     </div>`;
 }
 
-function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistComment, dateStr }) {
+// ---------------------------------------------------------------------------
+// ROI history line chart (SVG, since March 1)
+// ---------------------------------------------------------------------------
+
+function roiChartSection(history) {
+  if (!history || !history.entries) return '';
+
+  // Build chart data: entries since March 1 with mortgage30 data
+  const chartData = history.entries
+    .filter(e => e.date >= '2026-03-01' && e.mortgage30 !== null)
+    .map(e => {
+      const r = calcROIFromMortgage(e.mortgage30);
+      return {
+        date:           e.date,
+        withCredits:    r.withCredits.breakEvenMonths,
+        withoutCredits: r.withoutCredits.breakEvenMonths,
+      };
+    })
+    .filter(e => e.withCredits !== null && e.withoutCredits !== null);
+
+  if (chartData.length < 2) {
+    // Not enough data yet — show placeholder
+    return `
+    <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Break-Even History (Since Mar 1)</h3>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:24px;color:#6b7280;font-size:13px;text-align:center">
+      Accumulating data — chart will appear once more weekly mortgage data is available.
+    </div>`;
+  }
+
+  const W = 560, H = 200;
+  const padL = 44, padR = 16, padT = 14, padB = 36;
+  const pw = W - padL - padR;
+  const ph = H - padT - padB;
+
+  const allVals = chartData.flatMap(d => [d.withCredits, d.withoutCredits]);
+  const rawMax  = Math.max(...allVals);
+  const maxY    = Math.min(60, Math.ceil(rawMax / 5) * 5 + 5);
+  const minY    = 0;
+  const n       = chartData.length;
+
+  const xScale  = (i) => padL + (n === 1 ? pw / 2 : (i / (n - 1)) * pw);
+  const yScale  = (v) => padT + ph - ((Math.min(v, maxY) - minY) / (maxY - minY)) * ph;
+
+  const linePath = (key) =>
+    chartData.map((d, i) => `${i === 0 ? 'M' : 'L'}${xScale(i).toFixed(1)},${yScale(d[key]).toFixed(1)}`).join(' ');
+
+  const dots = (key, color) =>
+    chartData.map((d, i) =>
+      `<circle cx="${xScale(i).toFixed(1)}" cy="${yScale(d[key]).toFixed(1)}" r="3.5" fill="${color}" stroke="#fff" stroke-width="1.5"/>`
+    ).join('');
+
+  // Y-axis ticks every 5 months
+  const yTicks = [];
+  for (let v = 0; v <= maxY; v += 5) yTicks.push(v);
+
+  const gridLines = yTicks
+    .filter(v => v % 10 === 0)
+    .map(v => `<line x1="${padL}" y1="${yScale(v).toFixed(1)}" x2="${padL + pw}" y2="${yScale(v).toFixed(1)}" stroke="#e5e7eb" stroke-width="1"/>`)
+    .join('');
+
+  const yAxisLabels = yTicks
+    .filter(v => v % 10 === 0)
+    .map(v => `<text x="${padL - 6}" y="${(yScale(v) + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#9ca3af">${v}</text>`)
+    .join('');
+
+  // X-axis: show first, last, and up to 3 middle dates
+  const xIdxs = [...new Set([0, Math.floor(n / 4), Math.floor(n / 2), Math.floor(3 * n / 4), n - 1])].filter(i => i < n);
+  const xLabels = xIdxs.map(i =>
+    `<text x="${xScale(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#9ca3af">${chartData[i].date.slice(5)}</text>`
+  ).join('');
+
+  // 20-month target line
+  const target20Y = yScale(20).toFixed(1);
+  const targetLine = maxY >= 20
+    ? `<line x1="${padL}" y1="${target20Y}" x2="${padL + pw}" y2="${target20Y}" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="5,3"/>
+       <text x="${padL + pw + 2}" y="${(parseFloat(target20Y) + 4).toFixed(1)}" font-size="9" fill="#fbbf24" font-weight="bold">20mo</text>`
+    : '';
+
+  return `
+    <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Break-Even History (Since Mar 1)</h3>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:24px">
+      <div style="font-size:11px;color:#6b7280;margin-bottom:6px">
+        <span style="display:inline-block;width:16px;height:3px;background:#7c3aed;vertical-align:middle;margin-right:4px;border-radius:2px"></span>With Credits ($1,600) &nbsp;&nbsp;
+        <span style="display:inline-block;width:16px;height:3px;background:#0369a1;vertical-align:middle;margin-right:4px;border-radius:2px"></span>Without Credits ($6,000) &nbsp;&nbsp;
+        <span style="display:inline-block;width:16px;height:2px;background:#fbbf24;vertical-align:middle;margin-right:4px;border-style:dashed;border-top:2px dashed #fbbf24;height:0"></span>20mo target
+      </div>
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block;overflow:visible">
+        ${gridLines}
+        ${targetLine}
+        <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + ph}" stroke="#d1d5db" stroke-width="1"/>
+        <line x1="${padL}" y1="${padT + ph}" x2="${padL + pw}" y2="${padT + ph}" stroke="#d1d5db" stroke-width="1"/>
+        <path d="${linePath('withCredits')}"    fill="none" stroke="#7c3aed" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="${linePath('withoutCredits')}" fill="none" stroke="#0369a1" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        ${dots('withCredits',    '#7c3aed')}
+        ${dots('withoutCredits', '#0369a1')}
+        ${yAxisLabels}
+        ${xLabels}
+        <text x="8" y="${(padT + ph / 2).toFixed(1)}" text-anchor="middle" font-size="9" fill="#9ca3af" transform="rotate(-90,8,${(padT + ph / 2).toFixed(1)})">Months</text>
+      </svg>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Full HTML builder
+// ---------------------------------------------------------------------------
+
+function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistComment, dateStr, history }) {
   const { curveShape } = require('./fomc');
   const curve = curveShape(rates.spreads.twoThirty);
 
-  // Headline stats bar
   const headlineItems = [
-    { label: '2yr Treasury', value: rateCell(rates.dgs2.value), badge: bpBadge(rates.dgs2.bpChange) },
-    { label: '10yr Treasury', value: rateCell(rates.dgs10.value), badge: bpBadge(rates.dgs10.bpChange) },
-    { label: '30yr Treasury', value: rateCell(rates.dgs30.value), badge: bpBadge(rates.dgs30.bpChange) },
+    { label: '2yr Treasury',  value: rateCell(rates.dgs2.value),      badge: bpBadge(rates.dgs2.bpChange) },
+    { label: '10yr Treasury', value: rateCell(rates.dgs10.value),     badge: bpBadge(rates.dgs10.bpChange) },
+    { label: '30yr Treasury', value: rateCell(rates.dgs30.value),     badge: bpBadge(rates.dgs30.bpChange) },
     { label: '30yr Mortgage', value: rateCell(rates.mortgage30.value), badge: '' },
   ];
 
@@ -160,12 +293,10 @@ function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistCommen
       <div style="font-size:12px">${item.badge}</div>
     </td>`).join('');
 
-  // VA IRRRL estimate row
   const vaEst = rates.vaIrrrEstimate
     ? `<strong>${rates.vaIrrrEstimate.low.toFixed(3)}% – ${rates.vaIrrrEstimate.high.toFixed(3)}%</strong>`
     : '—';
 
-  // Headlines list
   const allHeadlines = [
     ...(sentiment.alphavantage?.topHeadlines ?? []).map(h => ({ ...h, tag: 'AV' })),
     ...(sentiment.newsHeadlines ?? []).map(h => ({ ...h, tag: 'News' })),
@@ -176,12 +307,10 @@ function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistCommen
      <span style="font-size:11px;color:#9ca3af;margin-left:6px">${h.source || h.tag}</span></li>`
   ).join('');
 
-  // Recommendation reasons
   const reasonsList = recommendation.reasons.map(r =>
     `<li style="margin-bottom:6px">${r}</li>`
   ).join('');
 
-  // Stats row
   const stats = recommendation.stats || {};
   const statsRow = `
     <table style="width:100%;font-size:13px;border-collapse:collapse">
@@ -219,6 +348,9 @@ function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistCommen
     <!-- Verdict banner -->
     ${verdictBanner(recommendation.verdict, recommendation.color)}
 
+    <!-- Countdown -->
+    ${countdownSection()}
+
     <!-- Rate stats bar -->
     <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Current Rates</h3>
     <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:24px">
@@ -235,7 +367,10 @@ function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistCommen
     <!-- ROI break-even -->
     ${roiSection(rates)}
 
-    <!-- 60-day rate table -->
+    <!-- ROI history chart -->
+    ${roiChartSection(history)}
+
+    <!-- Rate history table -->
     <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Rate History (Weekly Snapshots)</h3>
     <div style="margin-bottom:24px">${weeklyTable(recommendation.weeklySnapshot)}</div>
 
@@ -300,53 +435,145 @@ function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistCommen
 </html>`;
 }
 
-async function sendEmail({ rates, fomcRisk, sentiment, recommendation, economistComment }) {
-  const dateStr = format(new Date(), 'EEEE, MMMM d, yyyy');
-  const subject = `VA IRRRL Watch ${format(new Date(), 'M/d')} | 30yr: ${rates.dgs30.value?.toFixed(3) ?? '?'}% | ${recommendation.verdict}`;
+// ---------------------------------------------------------------------------
+// Alert email (urgent, sent separately when deadline near + ROI < 20 months)
+// ---------------------------------------------------------------------------
 
-  const html = buildHtml({ rates, fomcRisk, sentiment, recommendation, economistComment, dateStr });
+function buildAlertHtml({ withCredits, withoutCredits, daysToDeadline, dateStr }) {
+  const fmt = (n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const wcBe  = withCredits.breakEvenMonths;
+  const wocBe = withoutCredits.breakEvenMonths;
 
-  // Jeff + Amy get emails every weekday
-  const dailyRecipients = (process.env.RECIPIENT_EMAILS || '')
-    .split(',').map(e => e.trim()).filter(Boolean);
+  const row = (label, roi, accentColor) => `
+    <tr>
+      <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;font-weight:600">${label}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb">$${fmt(roi.closingCosts)}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;color:${accentColor}">${roi.newRate.toFixed(3)}%</td>
+      <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;color:#16a34a;font-weight:700">−$${fmt(Math.abs(roi.monthlySavings))}/mo</td>
+      <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;font-weight:700;font-size:16px;color:#1e40af">${roi.breakEvenMonths} mo</td>
+    </tr>`;
 
-  // Evan + Alec get emails on Tuesdays (2) and Thursdays (4) only
-  const dayOfWeek = new Date().getDay();
-  const isTueThu = dayOfWeek === 2 || dayOfWeek === 4;
-  const ttRecipients = isTueThu
-    ? (process.env.RECIPIENT_EMAILS_TT || '').split(',').map(e => e.trim()).filter(Boolean)
-    : [];
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f9fafb;margin:0;padding:0">
+<div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #e5e7eb">
+  <div style="background:#dc2626;color:#fff;padding:20px 24px;text-align:center">
+    <div style="font-size:24px;font-weight:900">🚨 VA IRRRL LOCK ALERT</div>
+    <div style="font-size:14px;margin-top:4px;opacity:0.9">${dateStr} · Break-even under 20 months</div>
+  </div>
+  <div style="padding:24px">
+    <div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:14px 18px;margin-bottom:20px;text-align:center">
+      <div style="font-size:13px;color:#991b1b;font-weight:600">CLOSE DEADLINE</div>
+      <div style="font-size:36px;font-weight:900;color:#dc2626;line-height:1">${daysToDeadline}</div>
+      <div style="font-size:14px;color:#991b1b;font-weight:600">days until April 30, 2026</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px">
+      <thead>
+        <tr style="background:#f3f4f6">
+          <th style="padding:8px 14px;text-align:left">Scenario</th>
+          <th style="padding:8px 14px;text-align:left">Closing Cost</th>
+          <th style="padding:8px 14px;text-align:left">New Rate</th>
+          <th style="padding:8px 14px;text-align:left">Mo. Savings</th>
+          <th style="padding:8px 14px;text-align:left">Break-Even</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${row('With Credits',    withCredits,    '#7c3aed')}
+        ${row('Without Credits', withoutCredits, '#0369a1')}
+      </tbody>
+    </table>
+    <div style="font-size:12px;color:#6b7280;font-style:italic">
+      Current rate: ${withCredits.currentRate}% · Balance: $${fmt(withCredits.loanBalance)} · P&amp;I only, escrow unchanged
+    </div>
+  </div>
+</div>
+</body></html>`;
+}
 
-  const recipients = [...dailyRecipients, ...ttRecipients];
-  console.log(`  Recipients today (day ${dayOfWeek}): ${recipients.join(', ')}`);
+// ---------------------------------------------------------------------------
+// Transport helper (shared)
+// ---------------------------------------------------------------------------
 
-  if (recipients.length === 0) {
-    console.warn('No RECIPIENT_EMAILS configured — skipping email send.');
-    return;
-  }
-
-  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-    console.warn('Gmail credentials not set — skipping email send. HTML preview saved to /tmp/preview.html');
-    require('fs').writeFileSync('/tmp/preview.html', html);
-    return;
-  }
-
-  const transporter = nodemailer.createTransport({
+function makeTransporter() {
+  return nodemailer.createTransport({
     service: 'gmail',
     auth: {
       user: process.env.GMAIL_USER,
       pass: process.env.GMAIL_APP_PASSWORD,
     },
   });
+}
 
-  const result = await transporter.sendMail({
+function getRecipients() {
+  const daily  = (process.env.RECIPIENT_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
+  const dow    = new Date().getDay();
+  const tueThu = dow === 2 || dow === 4
+    ? (process.env.RECIPIENT_EMAILS_TT || '').split(',').map(e => e.trim()).filter(Boolean)
+    : [];
+  return [...daily, ...tueThu];
+}
+
+// ---------------------------------------------------------------------------
+// sendEmail — main daily email
+// Returns true if email was sent, false if skipped (no creds / no recipients)
+// Throws on SMTP failure.
+// ---------------------------------------------------------------------------
+
+async function sendEmail({ rates, fomcRisk, sentiment, recommendation, economistComment, history }) {
+  const dateStr    = format(new Date(), 'EEEE, MMMM d, yyyy');
+  const subject    = `VA IRRRL Watch ${format(new Date(), 'M/d')} | 30yr: ${rates.dgs30.value?.toFixed(3) ?? '?'}% | ${recommendation.verdict}`;
+  const html       = buildHtml({ rates, fomcRisk, sentiment, recommendation, economistComment, dateStr, history });
+  const recipients = getRecipients();
+
+  console.log(`  Day of week: ${new Date().getDay()} | Recipients: ${recipients.length > 0 ? recipients.join(', ') : 'NONE'}`);
+
+  if (recipients.length === 0) {
+    console.error('  ⚠ RECIPIENT_EMAILS not configured — email skipped.');
+    return false;
+  }
+
+  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+    console.error('  ⚠ GMAIL_USER or GMAIL_APP_PASSWORD not set — email skipped.');
+    // Save HTML for debugging
+    require('fs').writeFileSync('/tmp/preview.html', html);
+    return false;
+  }
+
+  console.log(`  Sending to: ${recipients.join(', ')}`);
+  const result = await makeTransporter().sendMail({
     from: `VA IRRRL Watch <${process.env.GMAIL_USER}>`,
-    to: recipients.join(', '),
+    to:   recipients.join(', '),
     subject,
     html,
   });
-
-  console.log('Email sent:', result.messageId, '→', recipients.join(', '));
+  console.log(`  ✓ Email sent: ${result.messageId}`);
+  return true;
 }
 
-module.exports = { sendEmail, buildHtml };
+// ---------------------------------------------------------------------------
+// sendAlertEmail — urgent deadline + ROI alert
+// ---------------------------------------------------------------------------
+
+async function sendAlertEmail({ withCredits, withoutCredits, daysToDeadline }) {
+  const dateStr    = format(new Date(), 'EEEE, MMMM d, yyyy');
+  const subject    = `🚨 VA IRRRL ALERT ${format(new Date(), 'M/d')} | Break-Even ${Math.min(withCredits.breakEvenMonths, withoutCredits.breakEvenMonths)}mo | ${daysToDeadline} days left`;
+  const html       = buildAlertHtml({ withCredits, withoutCredits, daysToDeadline, dateStr });
+  const daily      = (process.env.RECIPIENT_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
+
+  if (daily.length === 0 || !process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+    console.warn('  Alert email skipped — missing credentials or recipients.');
+    return false;
+  }
+
+  console.log(`  Sending ALERT to: ${daily.join(', ')}`);
+  const result = await makeTransporter().sendMail({
+    from: `VA IRRRL Watch <${process.env.GMAIL_USER}>`,
+    to:   daily.join(', '),
+    subject,
+    html,
+  });
+  console.log(`  ✓ Alert sent: ${result.messageId}`);
+  return true;
+}
+
+module.exports = { sendEmail, sendAlertEmail, buildHtml };

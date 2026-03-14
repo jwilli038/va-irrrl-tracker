@@ -54,4 +54,15 @@ function calcROI(newRatePct, closingCosts) {
   };
 }
 
-module.exports = { calcROI };
+/**
+ * Compute both ROI scenarios from a raw mortgage30 rate.
+ * Used for historical chart data.
+ */
+function calcROIFromMortgage(mortgage30) {
+  return {
+    withCredits:    calcROI(mortgage30 - 0.125, 1600),
+    withoutCredits: calcROI(mortgage30 - 0.375, 6000),
+  };
+}
+
+module.exports = { calcROI, calcROIFromMortgage };
