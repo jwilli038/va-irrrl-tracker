@@ -175,7 +175,7 @@ function roiSection(rates) {
 }
 
 // ---------------------------------------------------------------------------
-// ROI history line chart — fixed Mar 1 → May 1 X axis, daily DGS30-based data
+// ROI history line chart — rendered as PNG via QuickChart.io (email-safe)
 // ---------------------------------------------------------------------------
 
 function roiChartSection(history) {
@@ -187,134 +187,129 @@ function roiChartSection(history) {
     ? spreadSamples.reduce((s, e) => s + (e.mortgage30 - e.dgs30), 0) / spreadSamples.length
     : 1.30;
 
-  // For every trading day since Mar 1 with DGS30 data, estimate mortgage30
-  // Use actual mortgage30 if available, otherwise DGS30 + avgSpread
-  const chartData = history.entries
-    .filter(e => e.date >= '2026-03-01' && e.dgs30 !== null)
-    .map(e => {
+  // All weekdays Mar 1 → May 1 — populate actual data where available, null otherwise
+  const allDays = [];
+  const cur = new Date('2026-03-01T12:00:00Z');
+  const end = new Date('2026-05-01T12:00:00Z');
+  while (cur <= end) {
+    if (cur.getUTCDay() !== 0 && cur.getUTCDay() !== 6) {
+      allDays.push(cur.toISOString().slice(0, 10));
+    }
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+
+  // Build lookup from history
+  const lookup = new Map();
+  for (const e of history.entries) {
+    if (e.date >= '2026-03-01' && e.dgs30 !== null) {
       const m30 = e.mortgage30 !== null
         ? e.mortgage30
         : parseFloat((e.dgs30 + avgSpread).toFixed(3));
       const r = calcROIFromMortgage(m30);
-      return {
-        date:           e.date,
-        withCredits:    r.withCredits.breakEvenMonths,
-        withoutCredits: r.withoutCredits.breakEvenMonths,
-        estimated:      e.mortgage30 === null,
-      };
-    })
-    .filter(e => e.withCredits !== null && e.withoutCredits !== null);
+      if (r.withCredits.breakEvenMonths !== null) {
+        lookup.set(e.date, {
+          wc:  r.withCredits.breakEvenMonths,
+          woc: r.withoutCredits.breakEvenMonths,
+        });
+      }
+    }
+  }
 
-  // Fixed date range: Mar 1 → May 1 (61 days)
-  const CHART_START = new Date('2026-03-01');
-  const CHART_END   = new Date('2026-05-01');
-  const totalMs     = CHART_END - CHART_START;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const labels = allDays.map(d => {
+    // Only label the 1st of each month
+    return d.slice(8) === '01' ? d.slice(5, 10).replace('-', '/') : '';
+  });
 
-  const W = 560, H = 210;
-  const padL = 46, padR = 20, padT = 14, padB = 38;
-  const pw = W - padL - padR;
-  const ph = H - padT - padB;
+  const wcData  = allDays.map(d => lookup.has(d) ? lookup.get(d).wc  : null);
+  const wocData = allDays.map(d => lookup.has(d) ? lookup.get(d).woc : null);
 
-  // X scale: position by calendar date
-  const xOfDate = (dateStr) => {
-    const ms = new Date(dateStr) - CHART_START;
-    return padL + (ms / totalMs) * pw;
-  };
-
-  const allVals = chartData.flatMap(d => [d.withCredits, d.withoutCredits]);
-  const rawMax  = allVals.length ? Math.max(...allVals) : 60;
-  const maxY    = Math.min(80, Math.ceil(rawMax / 10) * 10 + 10);
-  const minY    = 0;
-
-  const yScale = (v) => padT + ph - ((Math.min(v, maxY) - minY) / (maxY - minY)) * ph;
-
-  if (chartData.length === 0) {
+  const hasData = wcData.some(v => v !== null);
+  if (!hasData) {
     return `
     <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Break-Even Trend (Mar 1 – May 1)</h3>
     <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:24px;color:#6b7280;font-size:13px;text-align:center">
-      No rate data since March 1 yet.
+      No rate data since March 1 yet — check back after next pipeline run.
     </div>`;
   }
 
-  // Build SVG paths — connect consecutive points
-  const linePath = (key) =>
-    chartData.map((d, i) =>
-      `${i === 0 ? 'M' : 'L'}${xOfDate(d.date).toFixed(1)},${yScale(d[key]).toFixed(1)}`
-    ).join(' ');
+  // Build Chart.js 2 config for QuickChart
+  const cfg = {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'With Credits ($5,900)',
+          data: wcData,
+          borderColor: '#7c3aed',
+          pointBackgroundColor: '#7c3aed',
+          fill: false,
+          spanGaps: false,
+          tension: 0.3,
+          pointRadius: 3,
+          borderWidth: 2,
+        },
+        {
+          label: 'Without Credits ($7,900)',
+          data: wocData,
+          borderColor: '#0369a1',
+          pointBackgroundColor: '#0369a1',
+          fill: false,
+          spanGaps: false,
+          tension: 0.3,
+          pointRadius: 3,
+          borderWidth: 2,
+        },
+      ],
+    },
+    options: {
+      legend: { position: 'top', labels: { fontSize: 11, boxWidth: 16 } },
+      scales: {
+        yAxes: [{
+          ticks: { min: 0, stepSize: 10, fontSize: 10 },
+          scaleLabel: { display: true, labelString: 'Break-Even (months)', fontSize: 10 },
+          gridLines: { color: '#e5e7eb' },
+        }],
+        xAxes: [{
+          ticks: { fontSize: 10, autoSkip: false },
+          gridLines: { display: false },
+        }],
+      },
+      annotation: {
+        annotations: [{
+          type: 'line',
+          mode: 'horizontal',
+          scaleID: 'y-axis-0',
+          value: 20,
+          borderColor: '#f59e0b',
+          borderWidth: 2,
+          borderDash: [6, 3],
+          label: {
+            enabled: true,
+            content: '20mo target',
+            backgroundColor: 'rgba(245,158,11,0.85)',
+            fontSize: 10,
+            position: 'right',
+          },
+        }],
+      },
+    },
+  };
 
-  const dots = (key, color) =>
-    chartData.map(d =>
-      `<circle cx="${xOfDate(d.date).toFixed(1)}" cy="${yScale(d[key]).toFixed(1)}" r="${d.estimated ? 2.5 : 3.5}" fill="${d.estimated ? 'none' : color}" stroke="${color}" stroke-width="1.5"/>`
-    ).join('');
+  const chartUrl = `https://quickchart.io/chart?w=520&h=220&bkg=white&c=${encodeURIComponent(JSON.stringify(cfg))}`;
 
-  // Y grid + labels every 10 months
-  const yTicks = [];
-  for (let v = 0; v <= maxY; v += 10) yTicks.push(v);
-
-  const gridLines = yTicks.map(v =>
-    `<line x1="${padL}" y1="${yScale(v).toFixed(1)}" x2="${padL + pw}" y2="${yScale(v).toFixed(1)}" stroke="#e5e7eb" stroke-width="1"/>`
-  ).join('');
-
-  const yLabels = yTicks.map(v =>
-    `<text x="${padL - 6}" y="${(yScale(v) + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#9ca3af">${v}</text>`
-  ).join('');
-
-  // X axis: Mar 1, Apr 1, May 1 (and today marker)
-  const xMonths = [
-    { date: '2026-03-01', label: 'Mar 1' },
-    { date: '2026-04-01', label: 'Apr 1' },
-    { date: '2026-05-01', label: 'May 1' },
-  ];
-  const xLabels = xMonths.map(m =>
-    `<text x="${xOfDate(m.date).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#6b7280" font-weight="600">${m.label}</text>
-     <line x1="${xOfDate(m.date).toFixed(1)}" y1="${padT}" x2="${xOfDate(m.date).toFixed(1)}" y2="${padT + ph}" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="3,3"/>`
-  ).join('');
-
-  // "Today" vertical line
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const todayX   = xOfDate(todayStr);
-  const todayLine = todayX >= padL && todayX <= padL + pw
-    ? `<line x1="${todayX.toFixed(1)}" y1="${padT}" x2="${todayX.toFixed(1)}" y2="${padT + ph}" stroke="#6b7280" stroke-width="1" stroke-dasharray="4,2"/>
-       <text x="${todayX.toFixed(1)}" y="${padT - 2}" text-anchor="middle" font-size="9" fill="#6b7280">today</text>`
-    : '';
-
-  // 20-month target line
-  const t20y = yScale(20).toFixed(1);
-  const targetLine = maxY >= 20
-    ? `<line x1="${padL}" y1="${t20y}" x2="${padL + pw}" y2="${t20y}" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="5,3"/>
-       <text x="${padL + pw + 3}" y="${(parseFloat(t20y) + 4).toFixed(1)}" font-size="9" fill="#fbbf24" font-weight="bold">20</text>`
-    : '';
-
-  // Latest values callout
-  const last = chartData[chartData.length - 1];
-  const callout = last
-    ? `<text x="${(xOfDate(last.date) + 5).toFixed(1)}" y="${(yScale(last.withCredits) - 4).toFixed(1)}" font-size="9" fill="#7c3aed" font-weight="bold">${last.withCredits}mo</text>
-       <text x="${(xOfDate(last.date) + 5).toFixed(1)}" y="${(yScale(last.withoutCredits) - 4).toFixed(1)}" font-size="9" fill="#0369a1" font-weight="bold">${last.withoutCredits}mo</text>`
-    : '';
+  // Fallback table showing latest values
+  const lastEntry = allDays.slice().reverse().find(d => lookup.has(d));
+  const lastVals  = lastEntry ? lookup.get(lastEntry) : null;
 
   return `
     <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Break-Even Trend (Mar 1 – May 1)</h3>
     <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:24px">
-      <div style="font-size:11px;color:#6b7280;margin-bottom:6px">
-        <span style="display:inline-block;width:16px;height:3px;background:#7c3aed;vertical-align:middle;margin-right:4px;border-radius:2px"></span>With Credits ($5,900) &nbsp;
-        <span style="display:inline-block;width:16px;height:3px;background:#0369a1;vertical-align:middle;margin-right:4px;border-radius:2px"></span>Without Credits ($7,900) &nbsp;
-        <span style="color:#9ca3af">· Filled dots = actual PMMS rate · Open dots = DGS30 estimate</span>
+      <img src="${chartUrl}" width="520" height="220" alt="Break-even trend chart${lastVals ? ': With Credits ' + lastVals.wc + 'mo, Without Credits ' + lastVals.woc + 'mo' : ''}" style="display:block;max-width:100%;border-radius:4px">
+      <div style="font-size:11px;color:#9ca3af;margin-top:6px;text-align:center">
+        Dashed line = 20-month target · Points plotted for each trading day · Actual PMMS rate used when available, DGS30 estimate otherwise
       </div>
-      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block;overflow:visible">
-        ${gridLines}
-        ${targetLine}
-        ${xLabels}
-        ${todayLine}
-        <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + ph}" stroke="#d1d5db" stroke-width="1.5"/>
-        <line x1="${padL}" y1="${padT + ph}" x2="${padL + pw}" y2="${padT + ph}" stroke="#d1d5db" stroke-width="1.5"/>
-        <path d="${linePath('withCredits')}"    fill="none" stroke="#7c3aed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-        <path d="${linePath('withoutCredits')}" fill="none" stroke="#0369a1" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-        ${dots('withCredits',    '#7c3aed')}
-        ${dots('withoutCredits', '#0369a1')}
-        ${callout}
-        ${yLabels}
-        <text x="10" y="${(padT + ph / 2).toFixed(1)}" text-anchor="middle" font-size="9" fill="#9ca3af" transform="rotate(-90,10,${(padT + ph / 2).toFixed(1)})">Break-Even (months)</text>
-      </svg>
     </div>`;
 }
 
