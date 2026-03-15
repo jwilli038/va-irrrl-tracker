@@ -3,7 +3,7 @@
  */
 const nodemailer = require('nodemailer');
 const { format } = require('date-fns');
-const { calcROI, calcROIFromMortgage } = require('./roi');
+const { calcROI, calcROIFromMortgage, CLOSING_WITH_CREDITS, CLOSING_WITHOUT_CREDITS } = require('./roi');
 
 // ---------------------------------------------------------------------------
 // Utility badges / formatters
@@ -84,9 +84,9 @@ function countdownSection() {
 
   return `
     <div style="background:${bg};border:2px solid ${border};border-radius:8px;padding:14px 18px;margin-bottom:24px;text-align:center">
-      <div style="font-size:11px;color:#6b7280;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">VA Loan Close Deadline — April 30, 2026</div>
+      <div style="font-size:11px;color:#6b7280;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">April 30, 2026</div>
       <div style="font-size:42px;font-weight:900;color:${urgency};margin:4px 0;line-height:1">${daysLeft}</div>
-      <div style="font-size:14px;color:#374151;font-weight:600">days remaining to lock</div>
+      <div style="font-size:14px;color:#374151;font-weight:600">days until eligible for refi</div>
     </div>`;
 }
 
@@ -98,8 +98,10 @@ function roiSection(rates) {
   if (!rates.vaIrrrEstimate) return '';
   const fmt = (n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const withCredits    = calcROI(rates.vaIrrrEstimate.high, 1600);
-  const withoutCredits = calcROI(rates.vaIrrrEstimate.low,  6000);
+  // With credits:    VA rate high + $1,600 lender cost + $4,300 VA fee = $5,900
+  // Without credits: VA rate low  + $3,600 lender cost + $4,300 VA fee = $7,900
+  const withCredits    = calcROI(rates.vaIrrrEstimate.high, CLOSING_WITH_CREDITS);
+  const withoutCredits = calcROI(rates.vaIrrrEstimate.low,  CLOSING_WITHOUT_CREDITS);
 
   function scenarioCol(roi, label, accentColor) {
     const savingsColor = roi.monthlySavings > 0 ? '#16a34a' : '#dc2626';
@@ -117,7 +119,10 @@ function roiSection(rates) {
           <table style="width:100%;font-size:13px;border-collapse:collapse">
             <tr>
               <td style="padding:4px 0;color:#6b7280">Closing Costs</td>
-              <td style="padding:4px 0;font-weight:700;text-align:right">$${fmt(roi.closingCosts)}</td>
+              <td style="padding:4px 0;font-weight:700;text-align:right;font-size:15px">$${fmt(roi.closingCosts)}</td>
+            </tr>
+            <tr>
+              <td style="padding:0 0 4px;color:#9ca3af;font-size:11px" colspan="2">${roi.closingCosts === CLOSING_WITH_CREDITS ? '$1,600 lender + $4,300 VA fee' : '$3,600 lender + $4,300 VA fee'}</td>
             </tr>
             <tr>
               <td style="padding:4px 0;color:#6b7280">New Rate</td>
@@ -170,103 +175,145 @@ function roiSection(rates) {
 }
 
 // ---------------------------------------------------------------------------
-// ROI history line chart (SVG, since March 1)
+// ROI history line chart — fixed Mar 1 → May 1 X axis, daily DGS30-based data
 // ---------------------------------------------------------------------------
 
 function roiChartSection(history) {
   if (!history || !history.entries) return '';
 
-  // Build chart data: entries since March 1 with mortgage30 data
+  // Compute average mortgage30-DGS30 spread from entries that have both
+  const spreadSamples = history.entries.filter(e => e.dgs30 !== null && e.mortgage30 !== null);
+  const avgSpread = spreadSamples.length > 0
+    ? spreadSamples.reduce((s, e) => s + (e.mortgage30 - e.dgs30), 0) / spreadSamples.length
+    : 1.30;
+
+  // For every trading day since Mar 1 with DGS30 data, estimate mortgage30
+  // Use actual mortgage30 if available, otherwise DGS30 + avgSpread
   const chartData = history.entries
-    .filter(e => e.date >= '2026-03-01' && e.mortgage30 !== null)
+    .filter(e => e.date >= '2026-03-01' && e.dgs30 !== null)
     .map(e => {
-      const r = calcROIFromMortgage(e.mortgage30);
+      const m30 = e.mortgage30 !== null
+        ? e.mortgage30
+        : parseFloat((e.dgs30 + avgSpread).toFixed(3));
+      const r = calcROIFromMortgage(m30);
       return {
         date:           e.date,
         withCredits:    r.withCredits.breakEvenMonths,
         withoutCredits: r.withoutCredits.breakEvenMonths,
+        estimated:      e.mortgage30 === null,
       };
     })
     .filter(e => e.withCredits !== null && e.withoutCredits !== null);
 
-  if (chartData.length < 2) {
-    // Not enough data yet — show placeholder
-    return `
-    <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Break-Even History (Since Mar 1)</h3>
-    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:24px;color:#6b7280;font-size:13px;text-align:center">
-      Accumulating data — chart will appear once more weekly mortgage data is available.
-    </div>`;
-  }
+  // Fixed date range: Mar 1 → May 1 (61 days)
+  const CHART_START = new Date('2026-03-01');
+  const CHART_END   = new Date('2026-05-01');
+  const totalMs     = CHART_END - CHART_START;
 
-  const W = 560, H = 200;
-  const padL = 44, padR = 16, padT = 14, padB = 36;
+  const W = 560, H = 210;
+  const padL = 46, padR = 20, padT = 14, padB = 38;
   const pw = W - padL - padR;
   const ph = H - padT - padB;
 
+  // X scale: position by calendar date
+  const xOfDate = (dateStr) => {
+    const ms = new Date(dateStr) - CHART_START;
+    return padL + (ms / totalMs) * pw;
+  };
+
   const allVals = chartData.flatMap(d => [d.withCredits, d.withoutCredits]);
-  const rawMax  = Math.max(...allVals);
-  const maxY    = Math.min(60, Math.ceil(rawMax / 5) * 5 + 5);
+  const rawMax  = allVals.length ? Math.max(...allVals) : 60;
+  const maxY    = Math.min(80, Math.ceil(rawMax / 10) * 10 + 10);
   const minY    = 0;
-  const n       = chartData.length;
 
-  const xScale  = (i) => padL + (n === 1 ? pw / 2 : (i / (n - 1)) * pw);
-  const yScale  = (v) => padT + ph - ((Math.min(v, maxY) - minY) / (maxY - minY)) * ph;
+  const yScale = (v) => padT + ph - ((Math.min(v, maxY) - minY) / (maxY - minY)) * ph;
 
+  if (chartData.length === 0) {
+    return `
+    <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Break-Even Trend (Mar 1 – May 1)</h3>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:24px;color:#6b7280;font-size:13px;text-align:center">
+      No rate data since March 1 yet.
+    </div>`;
+  }
+
+  // Build SVG paths — connect consecutive points
   const linePath = (key) =>
-    chartData.map((d, i) => `${i === 0 ? 'M' : 'L'}${xScale(i).toFixed(1)},${yScale(d[key]).toFixed(1)}`).join(' ');
+    chartData.map((d, i) =>
+      `${i === 0 ? 'M' : 'L'}${xOfDate(d.date).toFixed(1)},${yScale(d[key]).toFixed(1)}`
+    ).join(' ');
 
   const dots = (key, color) =>
-    chartData.map((d, i) =>
-      `<circle cx="${xScale(i).toFixed(1)}" cy="${yScale(d[key]).toFixed(1)}" r="3.5" fill="${color}" stroke="#fff" stroke-width="1.5"/>`
+    chartData.map(d =>
+      `<circle cx="${xOfDate(d.date).toFixed(1)}" cy="${yScale(d[key]).toFixed(1)}" r="${d.estimated ? 2.5 : 3.5}" fill="${d.estimated ? 'none' : color}" stroke="${color}" stroke-width="1.5"/>`
     ).join('');
 
-  // Y-axis ticks every 5 months
+  // Y grid + labels every 10 months
   const yTicks = [];
-  for (let v = 0; v <= maxY; v += 5) yTicks.push(v);
+  for (let v = 0; v <= maxY; v += 10) yTicks.push(v);
 
-  const gridLines = yTicks
-    .filter(v => v % 10 === 0)
-    .map(v => `<line x1="${padL}" y1="${yScale(v).toFixed(1)}" x2="${padL + pw}" y2="${yScale(v).toFixed(1)}" stroke="#e5e7eb" stroke-width="1"/>`)
-    .join('');
-
-  const yAxisLabels = yTicks
-    .filter(v => v % 10 === 0)
-    .map(v => `<text x="${padL - 6}" y="${(yScale(v) + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#9ca3af">${v}</text>`)
-    .join('');
-
-  // X-axis: show first, last, and up to 3 middle dates
-  const xIdxs = [...new Set([0, Math.floor(n / 4), Math.floor(n / 2), Math.floor(3 * n / 4), n - 1])].filter(i => i < n);
-  const xLabels = xIdxs.map(i =>
-    `<text x="${xScale(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#9ca3af">${chartData[i].date.slice(5)}</text>`
+  const gridLines = yTicks.map(v =>
+    `<line x1="${padL}" y1="${yScale(v).toFixed(1)}" x2="${padL + pw}" y2="${yScale(v).toFixed(1)}" stroke="#e5e7eb" stroke-width="1"/>`
   ).join('');
 
+  const yLabels = yTicks.map(v =>
+    `<text x="${padL - 6}" y="${(yScale(v) + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#9ca3af">${v}</text>`
+  ).join('');
+
+  // X axis: Mar 1, Apr 1, May 1 (and today marker)
+  const xMonths = [
+    { date: '2026-03-01', label: 'Mar 1' },
+    { date: '2026-04-01', label: 'Apr 1' },
+    { date: '2026-05-01', label: 'May 1' },
+  ];
+  const xLabels = xMonths.map(m =>
+    `<text x="${xOfDate(m.date).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#6b7280" font-weight="600">${m.label}</text>
+     <line x1="${xOfDate(m.date).toFixed(1)}" y1="${padT}" x2="${xOfDate(m.date).toFixed(1)}" y2="${padT + ph}" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="3,3"/>`
+  ).join('');
+
+  // "Today" vertical line
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayX   = xOfDate(todayStr);
+  const todayLine = todayX >= padL && todayX <= padL + pw
+    ? `<line x1="${todayX.toFixed(1)}" y1="${padT}" x2="${todayX.toFixed(1)}" y2="${padT + ph}" stroke="#6b7280" stroke-width="1" stroke-dasharray="4,2"/>
+       <text x="${todayX.toFixed(1)}" y="${padT - 2}" text-anchor="middle" font-size="9" fill="#6b7280">today</text>`
+    : '';
+
   // 20-month target line
-  const target20Y = yScale(20).toFixed(1);
+  const t20y = yScale(20).toFixed(1);
   const targetLine = maxY >= 20
-    ? `<line x1="${padL}" y1="${target20Y}" x2="${padL + pw}" y2="${target20Y}" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="5,3"/>
-       <text x="${padL + pw + 2}" y="${(parseFloat(target20Y) + 4).toFixed(1)}" font-size="9" fill="#fbbf24" font-weight="bold">20mo</text>`
+    ? `<line x1="${padL}" y1="${t20y}" x2="${padL + pw}" y2="${t20y}" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="5,3"/>
+       <text x="${padL + pw + 3}" y="${(parseFloat(t20y) + 4).toFixed(1)}" font-size="9" fill="#fbbf24" font-weight="bold">20</text>`
+    : '';
+
+  // Latest values callout
+  const last = chartData[chartData.length - 1];
+  const callout = last
+    ? `<text x="${(xOfDate(last.date) + 5).toFixed(1)}" y="${(yScale(last.withCredits) - 4).toFixed(1)}" font-size="9" fill="#7c3aed" font-weight="bold">${last.withCredits}mo</text>
+       <text x="${(xOfDate(last.date) + 5).toFixed(1)}" y="${(yScale(last.withoutCredits) - 4).toFixed(1)}" font-size="9" fill="#0369a1" font-weight="bold">${last.withoutCredits}mo</text>`
     : '';
 
   return `
-    <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Break-Even History (Since Mar 1)</h3>
+    <h3 style="font-size:14px;font-weight:700;color:#374151;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Break-Even Trend (Mar 1 – May 1)</h3>
     <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:24px">
       <div style="font-size:11px;color:#6b7280;margin-bottom:6px">
-        <span style="display:inline-block;width:16px;height:3px;background:#7c3aed;vertical-align:middle;margin-right:4px;border-radius:2px"></span>With Credits ($1,600) &nbsp;&nbsp;
-        <span style="display:inline-block;width:16px;height:3px;background:#0369a1;vertical-align:middle;margin-right:4px;border-radius:2px"></span>Without Credits ($6,000) &nbsp;&nbsp;
-        <span style="display:inline-block;width:16px;height:2px;background:#fbbf24;vertical-align:middle;margin-right:4px;border-style:dashed;border-top:2px dashed #fbbf24;height:0"></span>20mo target
+        <span style="display:inline-block;width:16px;height:3px;background:#7c3aed;vertical-align:middle;margin-right:4px;border-radius:2px"></span>With Credits ($5,900) &nbsp;
+        <span style="display:inline-block;width:16px;height:3px;background:#0369a1;vertical-align:middle;margin-right:4px;border-radius:2px"></span>Without Credits ($7,900) &nbsp;
+        <span style="color:#9ca3af">· Filled dots = actual PMMS rate · Open dots = DGS30 estimate</span>
       </div>
       <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block;overflow:visible">
         ${gridLines}
         ${targetLine}
-        <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + ph}" stroke="#d1d5db" stroke-width="1"/>
-        <line x1="${padL}" y1="${padT + ph}" x2="${padL + pw}" y2="${padT + ph}" stroke="#d1d5db" stroke-width="1"/>
-        <path d="${linePath('withCredits')}"    fill="none" stroke="#7c3aed" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-        <path d="${linePath('withoutCredits')}" fill="none" stroke="#0369a1" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        ${xLabels}
+        ${todayLine}
+        <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + ph}" stroke="#d1d5db" stroke-width="1.5"/>
+        <line x1="${padL}" y1="${padT + ph}" x2="${padL + pw}" y2="${padT + ph}" stroke="#d1d5db" stroke-width="1.5"/>
+        <path d="${linePath('withCredits')}"    fill="none" stroke="#7c3aed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="${linePath('withoutCredits')}" fill="none" stroke="#0369a1" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
         ${dots('withCredits',    '#7c3aed')}
         ${dots('withoutCredits', '#0369a1')}
-        ${yAxisLabels}
-        ${xLabels}
-        <text x="8" y="${(padT + ph / 2).toFixed(1)}" text-anchor="middle" font-size="9" fill="#9ca3af" transform="rotate(-90,8,${(padT + ph / 2).toFixed(1)})">Months</text>
+        ${callout}
+        ${yLabels}
+        <text x="10" y="${(padT + ph / 2).toFixed(1)}" text-anchor="middle" font-size="9" fill="#9ca3af" transform="rotate(-90,10,${(padT + ph / 2).toFixed(1)})">Break-Even (months)</text>
       </svg>
     </div>`;
 }
@@ -483,7 +530,7 @@ function buildAlertHtml({ withCredits, withoutCredits, daysToDeadline, dateStr }
       </tbody>
     </table>
     <div style="font-size:12px;color:#6b7280;font-style:italic">
-      Current rate: ${withCredits.currentRate}% · Balance: $${fmt(withCredits.loanBalance)} · P&amp;I only, escrow unchanged
+      Current rate: ${withCredits.currentRate}% · Balance: $${fmt(withCredits.loanBalance)} · With credits = $1,600+$4,300 VA fee · Without = $3,600+$4,300 VA fee · P&amp;I only
     </div>
   </div>
 </div>

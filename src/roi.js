@@ -6,14 +6,17 @@
  *   Rate:      6.249%
  *   Matures:   September 2055  → 354 months remaining
  *
- * Two closing-cost scenarios:
- *   With credits:    $1,600  (lender credits reduce upfront cost, higher rate)
- *   Without credits: $4,337  (full closing costs, lower rate)
+ * Closing-cost scenarios:
+ *   With lender credits:    $1,600 + $4,300 VA fee = $5,900
+ *   Without lender credits: $3,600 + $4,300 VA fee = $7,900
  */
 
 const LOAN_BALANCE     = 858024.51;
 const CURRENT_RATE_PCT = 6.249;
 const REMAINING_MONTHS = 354;   // Sep 2055 − Mar 2026
+
+const CLOSING_WITH_CREDITS    = 5900;  // $1,600 lender cost + $4,300 VA fee
+const CLOSING_WITHOUT_CREDITS = 7900;  // $3,600 lender cost + $4,300 VA fee
 
 /**
  * Standard monthly mortgage payment formula:
@@ -60,9 +63,9 @@ function calcROI(newRatePct, closingCosts) {
  */
 function calcROIFromMortgage(mortgage30) {
   return {
-    withCredits:    calcROI(mortgage30 - 0.125, 1600),
-    withoutCredits: calcROI(mortgage30 - 0.375, 6000),
+    withCredits:    calcROI(mortgage30 - 0.125, CLOSING_WITH_CREDITS),
+    withoutCredits: calcROI(mortgage30 - 0.375, CLOSING_WITHOUT_CREDITS),
   };
 }
 
-module.exports = { calcROI, calcROIFromMortgage };
+module.exports = { calcROI, calcROIFromMortgage, CLOSING_WITH_CREDITS, CLOSING_WITHOUT_CREDITS };
