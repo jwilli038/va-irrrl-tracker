@@ -70,6 +70,26 @@ function weeklyTable(snapshots) {
 }
 
 // ---------------------------------------------------------------------------
+// Greeting / intro section
+// ---------------------------------------------------------------------------
+
+function greetingSection(recommendation) {
+  const verdict  = recommendation.verdict;
+  const reason   = recommendation.reasons?.[0] ?? 'conditions do not yet favor locking.';
+  const iconMap  = { 'LOCK NOW': '🔒', 'WAIT': '⏳', 'MONITOR': '👀' };
+  const icon     = iconMap[verdict] || '';
+  const colorMap = { 'LOCK NOW': '#166534', 'WAIT': '#92400e', 'MONITOR': '#1e40af' };
+  const color    = colorMap[verdict] || '#374151';
+
+  return `
+    <div style="background:#f8fafc;border-left:4px solid #1e3a5f;border-radius:0 8px 8px 0;padding:16px 20px;margin-bottom:24px;font-size:14px;color:#374151;line-height:1.7">
+      <strong>Greetings,</strong><br>
+      These reports are sent every <strong>Tuesday and Thursday</strong>. Alerts will be sent separately if break-even ROIs drop into the teens (under 20 months).<br><br>
+      <strong>Today's recommendation: <span style="color:${color}">${icon} ${verdict}</span></strong> — ${reason}
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
 // Countdown section
 // ---------------------------------------------------------------------------
 
@@ -169,7 +189,8 @@ function roiSection(rates) {
         </tr>
       </table>
       <div style="font-size:11px;color:#9ca3af;margin-top:10px;text-align:center">
-        With credits = higher rate, lower upfront cost · Without credits = lowest rate, full closing costs · P&amp;I only, escrow unchanged
+        With credits = higher rate, lower upfront cost · Without credits = lowest rate, full closing costs · P&amp;I only, escrow unchanged<br>
+        Rate basis: <strong>${rates.vaIrrrEstimate?.basis ?? 'PMMS'}</strong> · ${rates.vaIrrrEstimate?.basis === 'DGS30' ? `DGS30 ${rates.dgs30.value?.toFixed(3)}% + ${rates.vaIrrrEstimate.avgSpread?.toFixed(3)}% avg spread = implied ${rates.vaIrrrEstimate.impliedMortgage?.toFixed(3)}% mortgage (updates daily)` : `Freddie Mac PMMS ${rates.mortgage30.value?.toFixed(3)}% (updates weekly)`}
       </div>
     </div>`;
 }
@@ -317,7 +338,7 @@ function roiChartSection(history) {
 // Full HTML builder
 // ---------------------------------------------------------------------------
 
-function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistComment, dateStr, history }) {
+function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistComment, dateStr, history, withCreditsBE, withoutCreditsBE }) {
   const { curveShape } = require('./fomc');
   const curve = curveShape(rates.spreads.twoThirty);
 
@@ -390,6 +411,9 @@ function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistCommen
     <!-- Verdict banner -->
     ${verdictBanner(recommendation.verdict, recommendation.color)}
 
+    <!-- Greeting -->
+    ${greetingSection(recommendation)}
+
     <!-- Countdown -->
     ${countdownSection()}
 
@@ -403,7 +427,12 @@ function buildHtml({ rates, fomcRisk, sentiment, recommendation, economistCommen
     <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px 18px;margin-bottom:24px">
       <div style="font-size:12px;color:#1e40af;text-transform:uppercase;font-weight:600;letter-spacing:0.5px">Estimated VA IRRRL Rate Range</div>
       <div style="font-size:24px;color:#1e3a8a;margin-top:4px">${vaEst}</div>
-      <div style="font-size:11px;color:#6b7280;margin-top:4px">Based on Freddie Mac 30yr conventional average (MORTGAGE30US) minus 0.125%–0.375%. Actual VA rates vary by lender.</div>
+      <div style="font-size:11px;color:#6b7280;margin-top:4px">
+        ${rates.vaIrrrEstimate?.basis === 'DGS30'
+          ? `Derived from 30yr Treasury (DGS30 ${rates.dgs30.value?.toFixed(3)}%) + ${rates.vaIrrrEstimate.avgSpread?.toFixed(3)}% avg spread → implied ${rates.vaIrrrEstimate.impliedMortgage?.toFixed(3)}% mortgage, minus 0.125%–0.375%. Updates daily with Treasury moves.`
+          : `Based on Freddie Mac PMMS (${rates.mortgage30.value?.toFixed(3)}%) minus 0.125%–0.375%. Updates weekly.`}
+        Actual VA rates vary by lender.
+      </div>
     </div>
 
     <!-- ROI break-even -->

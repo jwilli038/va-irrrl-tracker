@@ -103,6 +103,26 @@ async function fetchRates() {
   const bpChange = (now, prevVal) =>
     now && prevVal ? Math.round((now.value - prevVal.value) * 100) : null;
 
+  // Compute average DGS30→MORTGAGE30 spread from history dates where both exist.
+  // This lets us estimate the mortgage rate from the daily-updating DGS30.
+  const spreadSamples = [];
+  for (const m of mortgageHistory) {
+    const dgs = dgs30History.find(d => d.date === m.date);
+    if (dgs) spreadSamples.push(m.value - dgs.value);
+  }
+  const avgSpread = spreadSamples.length > 0
+    ? parseFloat((spreadSamples.reduce((a, b) => a + b, 0) / spreadSamples.length).toFixed(3))
+    : 1.75; // conservative fallback if no overlap data
+
+  // Implied daily mortgage rate: DGS30 + avg spread (updates every trading day)
+  const impliedMortgage = dgs30Now
+    ? parseFloat((dgs30Now.value + avgSpread).toFixed(3))
+    : null;
+
+  // Use DGS30-implied rate as primary so ROI updates daily.
+  // PMMS is kept for reference display only.
+  const effectiveMortgage = impliedMortgage ?? mortgage30Now?.value ?? null;
+
   return {
     date: dgs30Now?.date ?? format(new Date(), 'yyyy-MM-dd'),
     dgs30: {
@@ -125,11 +145,15 @@ async function fetchRates() {
       value: mortgage30Now?.value ?? null,
       history: mortgageHistory,
     },
-    // VA IRRRL estimate: conventional 30yr mortgage minus ~0.25%
-    vaIrrrEstimate: mortgage30Now
+    // VA IRRRL estimate — DGS30-based so it responds to daily Treasury moves.
+    // avgSpread and impliedMortgage included for transparency in the email.
+    vaIrrrEstimate: effectiveMortgage
       ? {
-          low:  parseFloat((mortgage30Now.value - 0.375).toFixed(3)),
-          high: parseFloat((mortgage30Now.value - 0.125).toFixed(3)),
+          low:            parseFloat((effectiveMortgage - 0.375).toFixed(3)),
+          high:           parseFloat((effectiveMortgage - 0.125).toFixed(3)),
+          basis:          impliedMortgage ? 'DGS30' : 'PMMS',
+          impliedMortgage,
+          avgSpread,
         }
       : null,
     treasuryCurve,

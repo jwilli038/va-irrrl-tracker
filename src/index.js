@@ -12,7 +12,7 @@ const { fetchSentiment }         = require('./sentiment');
 const { updateHistory, recommend } = require('./analysis');
 const { sendEmail, sendAlertEmail } = require('./email');
 const { getEconomistCommentary } = require('./economist');
-const { calcROI }                = require('./roi');
+const { calcROI, CLOSING_WITH_CREDITS, CLOSING_WITHOUT_CREDITS } = require('./roi');
 const { format }                 = require('date-fns');
 const fs   = require('fs');
 const path = require('path');
@@ -95,11 +95,12 @@ async function run() {
     console.log(`\n  Days until April 30 deadline: ${daysLeft}`);
 
     let alertFired = false;
-    if (!DRY_RUN && rates.vaIrrrEstimate && daysLeft <= 30) {
-      const withCredits    = calcROI(rates.vaIrrrEstimate.high, 1600);
-      const withoutCredits = calcROI(rates.vaIrrrEstimate.low,  6000);
-      const roiAlert = (withCredits.breakEvenMonths !== null && withCredits.breakEvenMonths <= 20) ||
-                       (withoutCredits.breakEvenMonths !== null && withoutCredits.breakEvenMonths <= 20);
+    if (!DRY_RUN && rates.vaIrrrEstimate) {
+      const withCredits    = calcROI(rates.vaIrrrEstimate.high, CLOSING_WITH_CREDITS);
+      const withoutCredits = calcROI(rates.vaIrrrEstimate.low,  CLOSING_WITHOUT_CREDITS);
+      // Alert whenever either scenario's break-even drops into the teens (< 20 months)
+      const roiAlert = (withCredits.breakEvenMonths !== null && withCredits.breakEvenMonths < 20) ||
+                       (withoutCredits.breakEvenMonths !== null && withoutCredits.breakEvenMonths < 20);
 
       const lastAlert = history.lastAlertDate;
       if (roiAlert && lastAlert !== todayStr) {
