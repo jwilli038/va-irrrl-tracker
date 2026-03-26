@@ -223,9 +223,8 @@ function roiChartSection(history) {
   const lookup = new Map();
   for (const e of history.entries) {
     if (e.date >= '2026-03-01' && e.dgs30 !== null) {
-      const m30 = e.mortgage30 !== null
-        ? e.mortgage30
-        : parseFloat((e.dgs30 + avgSpread).toFixed(3));
+      // Always use DGS30 + avgSpread so the chart moves daily (not just weekly with PMMS)
+      const m30 = parseFloat((e.dgs30 + avgSpread).toFixed(3));
       const r = calcROIFromMortgage(m30);
       if (r.withCredits.breakEvenMonths !== null) {
         lookup.set(e.date, {
@@ -329,7 +328,7 @@ function roiChartSection(history) {
     <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:24px">
       <img src="${chartUrl}" width="520" height="220" alt="Break-even trend chart${lastVals ? ': With Credits ' + lastVals.wc + 'mo, Without Credits ' + lastVals.woc + 'mo' : ''}" style="display:block;max-width:100%;border-radius:4px">
       <div style="font-size:11px;color:#9ca3af;margin-top:6px;text-align:center">
-        Dashed line = 20-month target · Points plotted for each trading day · Actual PMMS rate used when available, DGS30 estimate otherwise
+        Dashed line = 20-month target · Points plotted for each trading day · Rate = DGS30 + avg spread (updates daily with Treasury moves)
       </div>
     </div>`;
 }
